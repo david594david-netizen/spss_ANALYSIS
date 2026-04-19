@@ -7,8 +7,6 @@
     
     <!-- 引入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- 引入 Tailwind Typography 插件 (用於美化產出的 HTML 結果) -->
     <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
 
     <!-- 引入 React 與 ReactDOM -->
@@ -27,38 +25,34 @@
     <script type="text/babel">
         const { useState, useRef, useEffect } = React;
 
+        // 具有指數退避策略的 API 呼叫
         const fetchWithRetry = async (url, options, retries = 5) => {
             const delays = [1000, 2000, 4000, 8000, 16000];
             for (let i = 0; i < retries; i++) {
                 try {
                     const response = await fetch(url, options);
                     if (!response.ok) {
-                        // 嘗試解析 Google 伺服器回傳的詳細錯誤訊息
                         const errorData = await response.json().catch(() => ({}));
-                        throw new Error(errorData?.error?.message || `HTTP 錯誤狀態碼: ${response.status}`);
+                        throw new Error(errorData?.error?.message || `伺服器回應錯誤 (狀態碼: ${response.status})`);
                     }
                     return await response.json();
                 } catch (error) {
                     if (i === retries - 1) throw error;
+                    console.log(`第 ${i + 1} 次嘗試失敗，${delays[i]/1000} 秒後重試...`);
                     await new Promise(resolve => setTimeout(resolve, delays[i]));
                 }
             }
         };
 
-        // Lucide 圖示組件封裝
+        // Lucide 圖示元件
         const Icon = ({ name, className }) => {
             const iconRef = useRef(null);
             useEffect(() => {
                 if (iconRef.current) {
                     lucide.createIcons({
-                        icons: {
-                            [name]: lucide.icons[name]
-                        },
+                        icons: { [name]: lucide.icons[name] },
                         nameAttr: 'data-lucide',
-                        attrs: {
-                            class: className,
-                            "stroke-width": 2
-                        }
+                        attrs: { class: className, "stroke-width": 2 }
                     });
                 }
             }, [name, className]);
@@ -66,9 +60,7 @@
         };
 
         function App() {
-            // 從 LocalStorage 讀取金鑰，若無則為空字串
             const [apiKey, setApiKey] = useState(() => localStorage.getItem('geminiApiKey') || "");
-            
             const [selectedFile, setSelectedFile] = useState(null);
             const [previewUrl, setPreviewUrl] = useState(null);
             const [base64Image, setBase64Image] = useState(null);
@@ -78,7 +70,6 @@
             const [error, setError] = useState(null);
             const fileInputRef = useRef(null);
 
-            // 當 apiKey 改變時，自動儲存到 LocalStorage
             useEffect(() => {
                 localStorage.setItem('geminiApiKey', apiKey);
             }, [apiKey]);
@@ -88,13 +79,20 @@
                 if (!file) return;
 
                 if (!file.type.startsWith('image/')) {
-                    setError("請上傳圖片格式的檔案 (PNG, JPG 等)。");
+                    setError("格式不符：請上傳圖片檔案 (PNG, JPG)。");
                     return;
+                }
+
+                // 檢查圖片大小，若超過 4MB 可能會導致問題，予以提醒
+                if (file.size > 4 * 1024 * 1024) {
+                     setError("圖片檔案過大 (超過 4MB)，建議壓縮後再上傳，以免分析超時。");
+                     return;
                 }
 
                 setSelectedFile(file);
                 setPreviewUrl(URL.createObjectURL(file));
                 setError(null);
+                setAnalysisResult(""); // 清除舊結果
 
                 const reader = new FileReader();
                 reader.onloadend = () => {
@@ -104,12 +102,58 @@
                 reader.readAsDataURL(file);
             };
 
+            // 測試模式：不需要 API 即可看到畫面是否正常渲染
+            const handleMockAnalyze = () => {
+                setIsLoading(true);
+                setError(null);
+                
+                setTimeout(() => {
+                    const mockHtml = `
+                        <h3>1. 結果撰寫範例（獨立樣本 <i>t</i> 檢定）</h3>
+                        <p>本研究探討不同性別之照服員在工作壓力上是否有顯著差異。結果顯示，女性照服員的工作壓力得分 (<i>M</i> = 45.2, <i>SD</i> = 8.4) 顯著高於男性照服員 (<i>M</i> = 38.7, <i>SD</i> = 7.2)，<i>t</i>(120) = 4.25, <i>p</i> < .001。這表示在長照實務現場，女性照服員可能面臨較高的情緒勞動與壓力。</p>
+                        
+                        <h3 class="mt-6">2. APA 7th 格式統計表格範例</h3>
+                        <p><strong>表 1</strong><br/><i>不同性別照服員在工作壓力之差異分析</i></p>
+                        <table class="w-full text-sm text-left border-collapse border-y-2 border-slate-800 my-4">
+                            <thead>
+                                <tr>
+                                    <th class="border-b border-slate-800 px-4 py-2 font-normal">性別</th>
+                                    <th class="border-b border-slate-800 px-4 py-2 font-normal text-center"><i>n</i></th>
+                                    <th class="border-b border-slate-800 px-4 py-2 font-normal text-center"><i>M</i></th>
+                                    <th class="border-b border-slate-800 px-4 py-2 font-normal text-center"><i>SD</i></th>
+                                    <th class="border-b border-slate-800 px-4 py-2 font-normal text-center"><i>t</i></th>
+                                    <th class="border-b border-slate-800 px-4 py-2 font-normal text-center"><i>p</i></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="px-4 py-2">女性</td>
+                                    <td class="px-4 py-2 text-center">82</td>
+                                    <td class="px-4 py-2 text-center">45.2</td>
+                                    <td class="px-4 py-2 text-center">8.4</td>
+                                    <td class="px-4 py-2 text-center" rowspan="2">4.25</td>
+                                    <td class="px-4 py-2 text-center" rowspan="2">< .001</td>
+                                </tr>
+                                <tr>
+                                    <td class="px-4 py-2">男性</td>
+                                    <td class="px-4 py-2 text-center">40</td>
+                                    <td class="px-4 py-2 text-center">38.7</td>
+                                    <td class="px-4 py-2 text-center">7.2</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <p class="text-xs text-slate-600"><i>註：這只是測試用的假資料，證明您的網頁前端運作正常。</i></p>
+                    `;
+                    setAnalysisResult(mockHtml);
+                    setIsLoading(false);
+                }, 1500);
+            };
+
             const handleAnalyze = async () => {
                 if (!apiKey.trim()) {
-                    setError("請先在上方設定您的 Gemini API Key。");
+                    setError("必須填寫 API Key。如果您沒有金鑰，請點擊下方的「測試介面」按鈕。");
                     return;
                 }
-
                 if (!base64Image) {
                     setError("請先上傳 SPSS 結果圖檔。");
                     return;
@@ -120,50 +164,31 @@
                 setAnalysisResult("");
 
                 try {
-                    // 更新為 Google 官方最穩定的公開視覺模型 gemini-2.5-flash
-                    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+                    // 強制使用穩定的 1.5-flash 模型，相容性最高
+                    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
                     
                     const promptText = `
-                        請檢視這張 SPSS 分析結果的截圖。相關的研究背景為：「${backgroundInfo || "未提供特定背景，請依圖表內容推斷"}」。
+                        請扮演一名嚴謹的社會科學與長照領域指導教授。請檢視這張 SPSS 分析結果的截圖。相關的研究背景為：「${backgroundInfo || "請依圖表推斷"}」。
                         
-                        請直接以 HTML 格式輸出結果，以便直接嵌入網頁，不需使用 Markdown 標記，也不要包含 \`\`\`html 標籤。
-                        請包含以下兩個部分：
-
-                        <h3>1. 結果撰寫（符合社會科學與 APA 7th 規範）</h3>
-                        <p>請撰寫一段符合學術規範的結果段落，描述性統計（如平均數、標準差）與推論性統計（如檢定統計量、自由度、p值、效果量）。</p>
-                        <ul>
-                            <li>統計符號請使用斜體 <i>標籤</i>，例如：<i>M</i>, <i>SD</i>, <i>t</i>, <i>F</i>, <i>p</i>。</li>
-                            <li>p 值如果不小於 .001，請報告精確值（小數點後三位），且不可大於 1 的數值（如 p 值、相關係數）前面不要補 0，例如 <i>p</i> = .034。若小於 .001，寫作 <i>p</i> < .001。</li>
-                        </ul>
-
+                        請直接輸出 HTML 格式，不需 Markdown 標記，不要 \`\`\`html 標籤。
+                        包含以下：
+                        <h3>1. 結果撰寫</h3>
+                        <p>撰寫符合 APA 7th 規範的文字解讀。統計符號如 <i>M</i>, <i>SD</i>, <i>t</i>, <i>p</i> 需斜體。<i>p</i> 值不補零（如 .034）。若 p < .001 則直接寫 < .001。</p>
                         <h3 class="mt-6">2. APA 7th 格式統計表格</h3>
-                        <p>請將數據整理成符合 APA 7th 規範的表格。使用以下 HTML 與 Tailwind 類別：</p>
-                        <p><strong>表 1</strong><br/><i>這裡寫入合適的表格標題</i></p>
+                        <p><strong>表 1</strong><br/><i>[根據內容產生標題]</i></p>
                         <table class="w-full text-sm text-left border-collapse border-y-2 border-slate-800 my-4">
-                            <thead>
-                                <tr>
-                                    <th class="border-b border-slate-800 px-4 py-2 font-normal">變項</th>
-                                    <!-- 其他表頭 -->
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <!-- 表格內容，單元格加上 px-4 py-2 -->
-                            </tbody>
+                            <thead><tr><th class="border-b border-slate-800 px-4 py-2 font-normal">變項</th></tr></thead>
+                            <tbody></tbody>
                         </table>
-                        <p class="text-xs text-slate-600"><i>註：</i> 這裡加入需要的註解（如 *p < .05）。</p>
                     `;
 
                     const payload = {
                         contents: [{
-                            role: "user",
                             parts: [
                                 { text: promptText },
                                 { inlineData: { mimeType: selectedFile.type, data: base64Image } }
                             ]
-                        }],
-                        systemInstruction: {
-                            parts: [{ text: "你是DAVID論文指導教授。專精於長照政策、老人學與社會科學量化分析，熟悉 SPSS 與 APA 第七版格式。你的語氣嚴謹但充滿鼓勵，旨在幫助碩士生寫出合乎學術規範的論文結果。" }]
-                        }
+                        }]
                     };
 
                     const result = await fetchWithRetry(endpoint, {
@@ -172,34 +197,31 @@
                         body: JSON.stringify(payload)
                     });
 
-                    if (result.error) {
-                        throw new Error(`API 錯誤: ${result.error.message}`);
-                    }
-
-                    const generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text;
-                    
-                    if (generatedText) {
+                    // 更安全的取值方式，防止出現 undefined error
+                    if (result && result.candidates && result.candidates[0] && result.candidates[0].content && result.candidates[0].content.parts) {
+                        const generatedText = result.candidates[0].content.parts[0].text;
                         setAnalysisResult(generatedText);
                     } else {
-                        throw new Error("模型回傳空白，無法生成分析結果。");
+                        console.error("API 回傳結構異常:", result);
+                        throw new Error("API 回傳了無法解析的資料結構。");
                     }
+
                 } catch (err) {
-                    console.error("API 錯誤細節：", err);
-                    // 將真實的錯誤訊息顯示在畫面上，方便我們除錯
-                    setError(`分析失敗：${err.message}`);
+                    console.error("系統錯誤：", err);
+                    setError(`系統無法完成分析：${err.message}`);
                 } finally {
                     setIsLoading(false);
                 }
             };
 
             return (
-                <div className="min-h-screen flex flex-col">
+                <div className="min-h-screen flex flex-col bg-slate-50">
                     <header className="bg-slate-900 text-white py-6 shadow-md">
                         <div className="max-w-6xl mx-auto px-6 flex items-center gap-3">
                             <Icon name="Database" className="w-8 h-8 text-blue-400" />
                             <div>
                                 <h1 className="text-2xl font-bold tracking-wide">DAVID 教授的統計分析指導室</h1>
-                                <p className="text-slate-400 text-sm mt-1">SPSS 結果判讀與 APA 7th 格式生成工具</p>
+                                <p className="text-slate-400 text-sm mt-1">SPSS 報表判讀與 APA 7th 轉換系統</p>
                             </div>
                         </div>
                     </header>
@@ -207,47 +229,30 @@
                     <main className="flex-grow max-w-6xl w-full mx-auto px-6 py-8 grid grid-cols-1 md:grid-cols-12 gap-8">
                         <section className="md:col-span-5 flex flex-col gap-6">
                             
-                            {/* 新增：API Key 設定區塊 */}
                             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                                 <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
                                     <Icon name="Key" className="w-5 h-5 text-blue-600" />
-                                    0. 系統授權設定
+                                    0. 系統授權 (Google Gemini API)
                                 </h2>
-                                <p className="text-sm text-slate-500 mb-3">
-                                    請輸入您的 Google Gemini API Key。金鑰僅會保存在您目前的瀏覽器中，不會上傳至伺服器，保障您的資安。
-                                </p>
                                 <input
                                     type="password"
                                     value={apiKey}
                                     onChange={(e) => setApiKey(e.target.value)}
-                                    placeholder="AIzaSy..."
-                                    className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-mono"
+                                    placeholder="貼上您的 API Key (AIzaSy...)"
+                                    className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-mono mb-2"
                                 />
-                                <div className="mt-2 text-xs text-slate-400">
-                                    <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">
-                                        不知道怎麼申請？點此前往 Google AI Studio 免費獲取
-                                    </a>
-                                </div>
                             </div>
 
                             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                                 <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
                                     <Icon name="Upload" className="w-5 h-5 text-blue-600" />
-                                    1. 上傳 SPSS 結果截圖
+                                    1. 上傳 SPSS 截圖
                                 </h2>
-                                <div 
-                                    className={`border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center text-center transition-colors
-                                        ${previewUrl ? 'border-blue-300 bg-blue-50' : 'border-slate-300 hover:border-slate-400 bg-slate-50'}`}
-                                >
+                                <div className={`border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center text-center transition-colors ${previewUrl ? 'border-blue-300 bg-blue-50' : 'border-slate-300 hover:border-slate-400 bg-slate-50'}`}>
                                     {previewUrl ? (
                                         <div className="space-y-4 w-full">
                                             <img src={previewUrl} alt="預覽" className="max-h-64 mx-auto rounded shadow-sm object-contain" />
-                                            <button 
-                                                onClick={() => fileInputRef.current?.click()}
-                                                className="text-sm text-blue-600 hover:text-blue-800 underline"
-                                            >
-                                                更換圖片
-                                            </button>
+                                            <button onClick={() => fileInputRef.current?.click()} className="text-sm text-blue-600 hover:text-blue-800 underline">更換圖片</button>
                                         </div>
                                     ) : (
                                         <div className="space-y-3 cursor-pointer w-full" onClick={() => fileInputRef.current?.click()}>
@@ -255,8 +260,7 @@
                                                 <Icon name="Image" className="w-8 h-8 text-slate-400" />
                                             </div>
                                             <div>
-                                                <p className="font-medium text-slate-700">點擊選擇圖檔</p>
-                                                <p className="text-xs text-slate-500 mt-1">支援 PNG, JPG</p>
+                                                <p className="font-medium text-slate-700">點擊上傳截圖</p>
                                             </div>
                                         </div>
                                     )}
@@ -267,72 +271,72 @@
                             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                                 <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
                                     <Icon name="BookOpen" className="w-5 h-5 text-blue-600" />
-                                    2. 補充研究背景 (選填)
+                                    2. 補充背景 (選填)
                                 </h2>
                                 <textarea
                                     value={backgroundInfo}
                                     onChange={(e) => setBackgroundInfo(e.target.value)}
-                                    placeholder="例如：探討長照機構照服員工作壓力與離職傾向的關係..."
-                                    className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none h-32"
+                                    placeholder="描述變項或研究目的..."
+                                    className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none h-24"
                                 />
                             </div>
 
-                            <button
-                                onClick={handleAnalyze}
-                                disabled={isLoading || !selectedFile}
-                                className={`w-full py-3 px-4 rounded-lg font-medium flex items-center justify-center gap-2 transition-all
-                                    ${(isLoading || !selectedFile) 
-                                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed' 
-                                        : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm active:scale-[0.98]'}`}
-                            >
-                                {isLoading ? (
-                                    <>
-                                        <Icon name="Loader2" className="w-5 h-5 animate-spin" />
-                                        DAVID 教授解讀中...
-                                    </>
-                                ) : (
-                                    <>
-                                        請求分析 <Icon name="ChevronRight" className="w-5 h-5" />
-                                    </>
-                                )}
-                            </button>
+                            <div className="flex flex-col gap-3">
+                                <button
+                                    onClick={handleAnalyze}
+                                    disabled={isLoading || !selectedFile}
+                                    className={`w-full py-3 px-4 rounded-lg font-medium flex items-center justify-center gap-2 transition-all ${(isLoading || !selectedFile) ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'}`}
+                                >
+                                    {isLoading ? <><Icon name="Loader2" className="w-5 h-5 animate-spin" /> 解析中...</> : <><Icon name="Sparkles" className="w-5 h-5" /> 進行 AI 分析</>}
+                                </button>
+                                
+                                <button
+                                    onClick={handleMockAnalyze}
+                                    disabled={isLoading}
+                                    className="w-full py-2 px-4 rounded-lg font-medium text-sm border border-slate-300 text-slate-600 hover:bg-slate-100 transition-all"
+                                >
+                                    跳過 API：直接預覽排版效果 (測試用)
+                                </button>
+                            </div>
 
                             {error && (
-                                <div className="bg-red-50 text-red-700 p-4 rounded-lg flex gap-3 text-sm">
+                                <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-lg flex gap-3 text-sm">
                                     <Icon name="AlertCircle" className="w-5 h-5 shrink-0" />
-                                    <p>{error}</p>
+                                    <p className="break-words w-full">{error}</p>
                                 </div>
                             )}
                         </section>
 
                         <section className="md:col-span-7 h-full flex flex-col">
-                            <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 flex-grow relative overflow-hidden">
+                            <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 flex-grow relative overflow-hidden flex flex-col">
                                 <div className="absolute top-0 left-0 w-full h-1 bg-blue-600"></div>
-                                <h2 className="text-xl font-bold flex items-center gap-2 mb-6 text-slate-800">
+                                <h2 className="text-xl font-bold flex items-center gap-2 mb-6 text-slate-800 shrink-0">
                                     <Icon name="CheckCircle2" className="w-6 h-6 text-emerald-500" />
-                                    分析與撰寫建議
+                                    分析結果與 APA 表格
                                 </h2>
 
-                                {!analysisResult && !isLoading && (
-                                    <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4 py-20">
-                                        <Icon name="Database" className="w-16 h-16 opacity-20" />
-                                        <p>上傳資料並點擊分析</p>
-                                    </div>
-                                )}
+                                <div className="flex-grow overflow-auto">
+                                    {!analysisResult && !isLoading && (
+                                        <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
+                                            <Icon name="Database" className="w-16 h-16 opacity-20" />
+                                            <p>請上傳資料並點擊分析</p>
+                                        </div>
+                                    )}
 
-                                {isLoading && (
-                                    <div className="h-full flex flex-col items-center justify-center text-blue-600 space-y-4 py-20">
-                                        <Icon name="Loader2" className="w-12 h-12 animate-spin opacity-50" />
-                                        <p className="animate-pulse">教授正在檢視報表...</p>
-                                    </div>
-                                )}
+                                    {isLoading && (
+                                        <div className="h-full flex flex-col items-center justify-center text-blue-600 space-y-4">
+                                            <Icon name="Loader2" className="w-12 h-12 animate-spin opacity-50" />
+                                            <p className="animate-pulse">教授正在檢視報表，請稍候...</p>
+                                        </div>
+                                    )}
 
-                                {analysisResult && (
-                                    <div 
-                                        className="prose prose-slate max-w-none prose-headings:font-bold prose-h3:text-lg prose-h3:mt-6 prose-p:leading-relaxed prose-th:bg-slate-50 overflow-auto max-h-[600px]"
-                                        dangerouslySetInnerHTML={{ __html: analysisResult }}
-                                    />
-                                )}
+                                    {analysisResult && (
+                                        <div 
+                                            className="prose prose-slate max-w-none prose-headings:font-bold prose-h3:text-lg prose-h3:mt-6 prose-p:leading-relaxed prose-th:bg-slate-50 pb-8"
+                                            dangerouslySetInnerHTML={{ __html: analysisResult }}
+                                        />
+                                    )}
+                                </div>
                             </div>
                         </section>
                     </main>
