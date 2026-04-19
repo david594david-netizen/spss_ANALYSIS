@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DAVID 教授的統計分析指導室</title>
+    
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 引入 Tailwind Typography 插件 (用於美化產出的 HTML 結果) -->
+    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+
+    <!-- 引入 React 與 ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- 引入 Babel 用於在瀏覽器編譯 JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- 引入 Lucide 圖示庫 -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans selection:bg-blue-200">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef, useEffect } = React;
+
+        const fetchWithRetry = async (url, options, retries = 5) => {
+            const delays = [1000, 2000, 4000, 8000, 16000];
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return await response.json();
+                } catch (error) {
+                    if (i === retries - 1) throw error;
+                    await new Promise(resolve => setTimeout(resolve, delays[i]));
+                }
+            }
+        };
+
+        // Lucide 圖示組件封裝
+        const Icon = ({ name, className }) => {
+            const iconRef = useRef(null);
+            useEffect(() => {
+                if (iconRef.current) {
+                    lucide.createIcons({
+                        icons: {
+                            [name]: lucide.icons[name]
+                        },
+                        nameAttr: 'data-lucide',
+                        attrs: {
+                            class: className,
+                            "stroke-width": 2
+                        }
+                    });
+                }
+            }, [name, className]);
+            return <i ref={iconRef} data-lucide={name}></i>;
+        };
+
+        function App() {
+            // 從 LocalStorage 讀取金鑰，若無則為空字串
+            const [apiKey, setApiKey] = useState(() => localStorage.getItem('geminiApiKey') || "");
+            
+            const [selectedFile, setSelectedFile] = useState(null);
+            const [previewUrl, setPreviewUrl] = useState(null);
+            const [base64Image, setBase64Image] = useState(null);
+            const [backgroundInfo, setBackgroundInfo] = useState("");
+            const [analysisResult, setAnalysisResult] = useState("");
+            const [isLoading, setIsLoading] = useState(false);
+            const [error, setError] = useState(null);
+            const fileInputRef = useRef(null);
+
+            // 當 apiKey 改變時，自動儲存到 LocalStorage
+            useEffect(() => {
+                localStorage.setItem('geminiApiKey', apiKey);
+            }, [apiKey]);
+
+            const handleFileChange = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                if (!file.type.startsWith('image/')) {
+                    setError("請上傳圖片格式的檔案 (PNG, JPG 等)。");
+                    return;
+                }
+
+                setSelectedFile(file);
+                setPreviewUrl(URL.createObjectURL(file));
+                setError(null);
+
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    const base64String = reader.result.split(',')[1];
+                    setBase64Image(base64String);
+                };
+                reader.readAsDataURL(file);
+            };
+
+            const handleAnalyze = async () => {
+                if (!apiKey.trim()) {
+                    setError("請先在上方設定您的 Gemini API Key。");
+                    return;
+                }
+
+                if (!base64Image) {
+                    setError("請先上傳 SPSS 結果圖檔。");
+                    return;
+                }
+
+                setIsLoading(true);
+                setError(null);
+                setAnalysisResult("");
+
+                try {
+                    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+                    
+                    const promptText = `
+                        請檢視這張 SPSS 分析結果的截圖。相關的研究背景為：「${backgroundInfo || "未提供特定背景，請依圖表內容推斷"}」。
+                        
+                        請直接以 HTML 格式輸出結果，以便直接嵌入網頁，不需使用 Markdown 標記，也不要包含 \`\`\`html 標籤。
+                        請包含以下兩個部分：
+
+                        <h3>1. 結果撰寫（符合社會科學與 APA 7th 規範）</h3>
+                        <p>請撰寫一段符合學術規範的結果段落，描述性統計（如平均數、標準差）與推論性統計（如檢定統計量、自由度、p值、效果量）。</p>
+                        <ul>
+                            <li>統計符號請使用斜體 <i>標籤</i>，例如：<i>M</i>, <i>SD</i>, <i>t</i>, <i>F</i>, <i>p</i>。</li>
+                            <li>p 值如果不小於 .001，請報告精確值（小數點後三位），且不可大於 1 的數值（如 p 值、相關係數）前面不要補 0，例如 <i>p</i> = .034。若小於 .001，寫作 <i>p</i> < .001。</li>
+                        </ul>
+
+                        <h3 class="mt-6">2. APA 7th 格式統計表格</h3>
+                        <p>請將數據整理成符合 APA 7th 規範的表格。使用以下 HTML 與 Tailwind 類別：</p>
+                        <p><strong>表 1</strong><br/><i>這裡寫入合適的表格標題</i></p>
+                        <table class="w-full text-sm text-left border-collapse border-y-2 border-slate-800 my-4">
+                            <thead>
+                                <tr>
+                                    <th class="border-b border-slate-800 px-4 py-2 font-normal">變項</th>
+                                    <!-- 其他表頭 -->
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- 表格內容，單元格加上 px-4 py-2 -->
+                            </tbody>
+                        </table>
+                        <p class="text-xs text-slate-600"><i>註：</i> 這裡加入需要的註解（如 *p < .05）。</p>
+                    `;
+
+                    const payload = {
+                        contents: [{
+                            role: "user",
+                            parts: [
+                                { text: promptText },
+                                { inlineData: { mimeType: selectedFile.type, data: base64Image } }
+                            ]
+                        }],
+                        systemInstruction: {
+                            parts: [{ text: "你是DAVID論文指導教授。專精於長照政策、老人學與社會科學量化分析，熟悉 SPSS 與 APA 第七版格式。你的語氣嚴謹但充滿鼓勵，旨在幫助碩士生寫出合乎學術規範的論文結果。" }]
+                        }
+                    };
+
+                    const result = await fetchWithRetry(endpoint, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (result.error) {
+                        throw new Error(`API 錯誤: ${result.error.message}`);
+                    }
+
+                    const generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                    
+                    if (generatedText) {
+                        setAnalysisResult(generatedText);
+                    } else {
+                        throw new Error("無法生成分析結果，請稍後再試。");
+                    }
+                } catch (err) {
+                    console.error(err);
+                    if (err.message.includes("API key not valid") || err.message.includes("API 錯誤")) {
+                        setError("API Key 無效或權限不足，請確認您輸入的金鑰是否正確。");
+                    } else {
+                        setError("分析過程中發生錯誤。請確認網路連線，或稍後重試。");
+                    }
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            return (
+                <div className="min-h-screen flex flex-col">
+                    <header className="bg-slate-900 text-white py-6 shadow-md">
+                        <div className="max-w-6xl mx-auto px-6 flex items-center gap-3">
+                            <Icon name="Database" className="w-8 h-8 text-blue-400" />
+                            <div>
+                                <h1 className="text-2xl font-bold tracking-wide">DAVID 教授的統計分析指導室</h1>
+                                <p className="text-slate-400 text-sm mt-1">SPSS 結果判讀與 APA 7th 格式生成工具</p>
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="flex-grow max-w-6xl w-full mx-auto px-6 py-8 grid grid-cols-1 md:grid-cols-12 gap-8">
+                        <section className="md:col-span-5 flex flex-col gap-6">
+                            
+                            {/* 新增：API Key 設定區塊 */}
+                            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                                <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
+                                    <Icon name="Key" className="w-5 h-5 text-blue-600" />
+                                    0. 系統授權設定
+                                </h2>
+                                <p className="text-sm text-slate-500 mb-3">
+                                    請輸入您的 Google Gemini API Key。金鑰僅會保存在您目前的瀏覽器中，不會上傳至伺服器，保障您的資安。
+                                </p>
+                                <input
+                                    type="password"
+                                    value={apiKey}
+                                    onChange={(e) => setApiKey(e.target.value)}
+                                    placeholder="AIzaSy..."
+                                    className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-mono"
+                                />
+                                <div className="mt-2 text-xs text-slate-400">
+                                    <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">
+                                        不知道怎麼申請？點此前往 Google AI Studio 免費獲取
+                                    </a>
+                                </div>
+                            </div>
+
+                            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                                <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
+                                    <Icon name="Upload" className="w-5 h-5 text-blue-600" />
+                                    1. 上傳 SPSS 結果截圖
+                                </h2>
+                                <div 
+                                    className={`border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center text-center transition-colors
+                                        ${previewUrl ? 'border-blue-300 bg-blue-50' : 'border-slate-300 hover:border-slate-400 bg-slate-50'}`}
+                                >
+                                    {previewUrl ? (
+                                        <div className="space-y-4 w-full">
+                                            <img src={previewUrl} alt="預覽" className="max-h-64 mx-auto rounded shadow-sm object-contain" />
+                                            <button 
+                                                onClick={() => fileInputRef.current?.click()}
+                                                className="text-sm text-blue-600 hover:text-blue-800 underline"
+                                            >
+                                                更換圖片
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-3 cursor-pointer w-full" onClick={() => fileInputRef.current?.click()}>
+                                            <div className="bg-white p-3 rounded-full inline-block shadow-sm">
+                                                <Icon name="Image" className="w-8 h-8 text-slate-400" />
+                                            </div>
+                                            <div>
+                                                <p className="font-medium text-slate-700">點擊選擇圖檔</p>
+                                                <p className="text-xs text-slate-500 mt-1">支援 PNG, JPG</p>
+                                            </div>
+                                        </div>
+                                    )}
+                                    <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*" className="hidden" />
+                                </div>
+                            </div>
+
+                            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                                <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
+                                    <Icon name="BookOpen" className="w-5 h-5 text-blue-600" />
+                                    2. 補充研究背景 (選填)
+                                </h2>
+                                <textarea
+                                    value={backgroundInfo}
+                                    onChange={(e) => setBackgroundInfo(e.target.value)}
+                                    placeholder="例如：探討長照機構照服員工作壓力與離職傾向的關係..."
+                                    className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none h-32"
+                                />
+                            </div>
+
+                            <button
+                                onClick={handleAnalyze}
+                                disabled={isLoading || !selectedFile}
+                                className={`w-full py-3 px-4 rounded-lg font-medium flex items-center justify-center gap-2 transition-all
+                                    ${(isLoading || !selectedFile) 
+                                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed' 
+                                        : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm active:scale-[0.98]'}`}
+                            >
+                                {isLoading ? (
+                                    <>
+                                        <Icon name="Loader2" className="w-5 h-5 animate-spin" />
+                                        DAVID 教授解讀中...
+                                    </>
+                                ) : (
+                                    <>
+                                        請求分析 <Icon name="ChevronRight" className="w-5 h-5" />
+                                    </>
+                                )}
+                            </button>
+
+                            {error && (
+                                <div className="bg-red-50 text-red-700 p-4 rounded-lg flex gap-3 text-sm">
+                                    <Icon name="AlertCircle" className="w-5 h-5 shrink-0" />
+                                    <p>{error}</p>
+                                </div>
+                            )}
+                        </section>
+
+                        <section className="md:col-span-7 h-full flex flex-col">
+                            <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 flex-grow relative overflow-hidden">
+                                <div className="absolute top-0 left-0 w-full h-1 bg-blue-600"></div>
+                                <h2 className="text-xl font-bold flex items-center gap-2 mb-6 text-slate-800">
+                                    <Icon name="CheckCircle2" className="w-6 h-6 text-emerald-500" />
+                                    分析與撰寫建議
+                                </h2>
+
+                                {!analysisResult && !isLoading && (
+                                    <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4 py-20">
+                                        <Icon name="Database" className="w-16 h-16 opacity-20" />
+                                        <p>上傳資料並點擊分析</p>
+                                    </div>
+                                )}
+
+                                {isLoading && (
+                                    <div className="h-full flex flex-col items-center justify-center text-blue-600 space-y-4 py-20">
+                                        <Icon name="Loader2" className="w-12 h-12 animate-spin opacity-50" />
+                                        <p className="animate-pulse">教授正在檢視報表...</p>
+                                    </div>
+                                )}
+
+                                {analysisResult && (
+                                    <div 
+                                        className="prose prose-slate max-w-none prose-headings:font-bold prose-h3:text-lg prose-h3:mt-6 prose-p:leading-relaxed prose-th:bg-slate-50 overflow-auto max-h-[600px]"
+                                        dangerouslySetInnerHTML={{ __html: analysisResult }}
+                                    />
+                                )}
+                            </div>
+                        </section>
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
