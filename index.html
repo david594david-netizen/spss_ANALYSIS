@@ -33,7 +33,9 @@
                 try {
                     const response = await fetch(url, options);
                     if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
+                        // 嘗試解析 Google 伺服器回傳的詳細錯誤訊息
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData?.error?.message || `HTTP 錯誤狀態碼: ${response.status}`);
                     }
                     return await response.json();
                 } catch (error) {
@@ -118,7 +120,8 @@
                 setAnalysisResult("");
 
                 try {
-                    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+                    // 更新為 Google 官方最穩定的公開視覺模型 gemini-2.5-flash
+                    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
                     
                     const promptText = `
                         請檢視這張 SPSS 分析結果的截圖。相關的研究背景為：「${backgroundInfo || "未提供特定背景，請依圖表內容推斷"}」。
@@ -178,15 +181,12 @@
                     if (generatedText) {
                         setAnalysisResult(generatedText);
                     } else {
-                        throw new Error("無法生成分析結果，請稍後再試。");
+                        throw new Error("模型回傳空白，無法生成分析結果。");
                     }
                 } catch (err) {
-                    console.error(err);
-                    if (err.message.includes("API key not valid") || err.message.includes("API 錯誤")) {
-                        setError("API Key 無效或權限不足，請確認您輸入的金鑰是否正確。");
-                    } else {
-                        setError("分析過程中發生錯誤。請確認網路連線，或稍後重試。");
-                    }
+                    console.error("API 錯誤細節：", err);
+                    // 將真實的錯誤訊息顯示在畫面上，方便我們除錯
+                    setError(`分析失敗：${err.message}`);
                 } finally {
                     setIsLoading(false);
                 }
